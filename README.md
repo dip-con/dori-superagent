@@ -1,6 +1,8 @@
 **English** · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-<img src="skills/dori-mode/assets/dori-avatar.png" alt="Dori" width="120" align="right">
+<p align="center">
+  <img src="skills/dori-mode/assets/dori-avatar.png" alt="Dori" width="120">
+</p>
 
 # omo-dori-mode-experimental
 
@@ -93,6 +95,20 @@ dori object-done fix-login --reason "the changelog entry is missing"
 ```
 
 The reason goes straight to the lane, which keeps working and claims again later. If nobody objects, `dori watch` closes the lane once the window is up. Before it does, it reads every `Done =` signal live again, and it refuses if a worktree still has commits that never reached a remote or uncommitted tracked changes. Either one turns the claim back into not-done, with the reason. Restarting the watcher doesn't reset the clock.
+
+### What counts as done
+
+A lane's `Done =` line lists signals the watcher can check for itself:
+- a PR merged;
+- an issue closed;
+- a package version published;
+- for work that never ends in a PR (a local setup, a QA pass, a running service): a command that exits 0, a file with the expected hash or JSON field, or a URL that answers with the expected status and body.
+
+```
+Done = command ["bun","test"] stdout~" 0 fail"; file qa/report.json json:.passed=true; url http://localhost:3000/health body~"ready"
+```
+
+The watcher runs each check itself when it closes the lane, with no shell, and never takes the lane's word for it. A signal it can't parse is refused when the lane is launched. The full syntax is in [`references/sessions.md`](skills/dori-mode/references/sessions.md).
 
 ## Commands
 

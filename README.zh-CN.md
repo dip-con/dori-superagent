@@ -1,6 +1,8 @@
 [English](README.md) · **简体中文** · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-<img src="skills/dori-mode/assets/dori-avatar.png" alt="Dori" width="120" align="right">
+<p align="center">
+  <img src="skills/dori-mode/assets/dori-avatar.png" alt="Dori" width="120">
+</p>
 
 # omo-dori-mode-experimental
 
@@ -93,6 +95,20 @@ dori object-done fix-login --reason "缺少 changelog 条目"
 ```
 
 理由会原样发给 lane,lane 修好后再次声明完成。如果没人反对，时间一到 `dori watch` 就会关闭这条 lane。关闭前它会重新实时读取每个 `Done =` 信号；如果 worktree 里还有没推到远端的提交或未提交的改动，它就不关闭，声明会带着原因退回 not-done。重启 watcher 不会让 5 分钟重新计时。
+
+### 怎样才算完成
+
+lane 的 `Done =` 行写的是 watcher 能自己检查的信号:
+- PR 已合并
+- issue 已关闭
+- 包的版本已发布
+- 对于不以 PR 结束的工作(本地设置、QA、运行中的服务):退出码为 0 的命令、哈希或 JSON 字段符合预期的文件、返回预期状态码和内容的 URL
+
+```
+Done = command ["bun","test"] stdout~" 0 fail"; file qa/report.json json:.passed=true; url http://localhost:3000/health body~"ready"
+```
+
+关闭 lane 时,watcher 会自己重新运行这些检查，不经过 shell,也从不凭 lane 自己的说法就算数。无法解析的信号在启动 lane 时就会被拒绝。完整语法见 [`references/sessions.md`](skills/dori-mode/references/sessions.md)。
 
 ## 命令
 

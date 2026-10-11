@@ -1,6 +1,8 @@
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · **한국어**
 
-<img src="skills/dori-mode/assets/dori-avatar.png" alt="Dori" width="120" align="right">
+<p align="center">
+  <img src="skills/dori-mode/assets/dori-avatar.png" alt="Dori" width="120">
+</p>
 
 # omo-dori-mode-experimental
 
@@ -93,6 +95,20 @@ dori object-done fix-login --reason "changelog 항목이 빠졌음"
 ```
 
 적은 이유가 레인에 그대로 전달되고, 레인은 고친 뒤 다시 완료를 알립니다. 아무도 반대하지 않으면 시간이 지난 뒤 `dori watch`가 레인을 닫습니다. 닫기 전에 `Done =` 신호를 모두 실제로 다시 확인하고, worktree에 원격에 올라가지 않은 커밋이나 커밋하지 않은 변경이 있으면 닫지 않습니다. 이때 완료 요청은 이유와 함께 not-done으로 돌아갑니다. watcher를 다시 켜도 5분 시계는 처음부터 다시 세지 않습니다.
+
+### 무엇을 완료로 보나
+
+레인의 `Done =` 줄에는 watcher가 직접 확인할 수 있는 신호를 적습니다.
+- PR 머지
+- 이슈 종료
+- 패키지 버전 배포
+- PR로 끝나지 않는 일(로컬 설정, QA, 띄워 둔 서비스)이라면, 종료 코드 0으로 끝나는 명령, 해시나 JSON 값이 맞는 파일, 기대한 상태 코드와 본문으로 응답하는 URL
+
+```
+Done = command ["bun","test"] stdout~" 0 fail"; file qa/report.json json:.passed=true; url http://localhost:3000/health body~"ready"
+```
+
+watcher는 레인을 닫을 때 셸 없이 이 확인을 직접 다시 돌리고, 레인이 됐다고 한 말을 그대로 믿지 않습니다. 해석할 수 없는 신호는 레인을 띄울 때 거부합니다. 전체 문법은 [`references/sessions.md`](skills/dori-mode/references/sessions.md)에 있어요.
 
 ## 명령
 

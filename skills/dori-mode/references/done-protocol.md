@@ -2,7 +2,7 @@
 
 Give this file to every lane you launch.
 
-When your lane's `Done =` signals are live (PR merged, issue closed, version published) and every change is pushed, claim done from your own session:
+When your lane's `Done =` signals are live and every change is pushed, claim done from your own session. The signals might be a PR merged, an issue closed or a version published. For local or QA-only work they can also be a command that passes, a file with the expected content, or a URL that answers (see `sessions.md`). Run them yourself first: the watcher re-runs every one and never takes your word for it.
 
 ```sh
 dori claim-done <your-lane-key> --evidence "<merge SHA, closed issue, version, links>"

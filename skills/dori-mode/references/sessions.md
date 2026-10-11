@@ -20,7 +20,26 @@ Write the brief like a careful prompt:
 - what not to touch;
 - how and when to report.
 
-**Why the `Done =` line has to be checkable:** the watcher closes lanes on its own. It can only read back `merged <owner/repo>#N`, `closed <owner/repo>#N` and `published <pkg>@<version>`, so `launch` and `adopt` refuse anything else. Work that can't be checked by a script (a QA pass, a design review) stays in the lane's own plan, and you judge it yourself before the claim.
+**Why the `Done =` line has to be checkable:** the watcher closes lanes on its own, so it can only trust what it can read back itself. `launch` and `adopt` refuse any signal outside this list. Signals are joined with `;`, and every one has to pass.
+
+| Signal | Passes when |
+|---|---|
+| `merged <owner/repo>#N` | the PR is merged and has a merge commit |
+| `closed <owner/repo>#N` | the issue is closed |
+| `published <pkg>@<version>` | npm has that exact version |
+| `command ["argv","as","json"] [stdout~"regex"]` | the command exits 0 when the watcher runs it, and stdout matches if a regex is given |
+| `file <path> [sha256=<hex>] [json:.a.b=<json value>]` | the file exists, its sha256 matches, and the JSON field equals the value |
+| `url <http(s) url> [status=200] [body~"regex"]` | a GET returns that status, and the body matches if a regex is given |
+
+The last three are for work that never lands as a PR: a local setup, a QA pass, a running service. Write the check so that it can fail. `command ["bun","test"] stdout~" 0 fail"` is a real check, while `command ["true"]` checks nothing. The watcher runs commands itself, in the lane's directory, as a plain argv with no shell. They have a 2-minute limit. It never trusts the lane's own report that something passed. Relative file paths resolve from the lane's directory, and `~` is your home. JSON values compare as JSON, so `json:.n=3` and `json:.n="3"` are different checks.
+
+Example for a QA-only lane:
+
+```
+Done = command ["bun","test"] stdout~" 0 fail"; file qa/report.json json:.passed=true; url http://localhost:3000/health body~"ready"
+```
+
+Work no script can check (a design review, a judgement call) stays in the lane's own plan. You judge it yourself before the claim.
 
 ## The registry
 

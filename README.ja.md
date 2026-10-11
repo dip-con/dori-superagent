@@ -1,6 +1,8 @@
 [English](README.md) · [简体中文](README.zh-CN.md) · **日本語** · [한국어](README.ko.md)
 
-<img src="skills/dori-mode/assets/dori-avatar.png" alt="Dori" width="120" align="right">
+<p align="center">
+  <img src="skills/dori-mode/assets/dori-avatar.png" alt="Dori" width="120">
+</p>
 
 # omo-dori-mode-experimental
 
@@ -93,6 +95,20 @@ dori object-done fix-login --reason "changelog の項目が抜けている"
 ```
 
 理由はそのままレーンに届き、レーンは直してからもう一度申告します。誰も異議を出さなければ、時間が来たところで `dori watch` がレーンを閉じます。閉じる前に `Done =` のシグナルをすべて実際に読み直し、worktree にリモートへ届いていないコミットや未コミットの変更があれば閉じません。その場合、申告は理由付きで not-done に戻ります。watcher を再起動しても、5 分の時計は最初からにはなりません。
+
+### 何をもって完了とするか
+
+レーンの `Done =` 行には、watcher が自分で確かめられるシグナルを書きます。
+- PR のマージ
+- issue のクローズ
+- パッケージのバージョン公開
+- PR で終わらない仕事(ローカルのセットアップ、QA、立ち上げたサービス)なら、終了コード 0 で終わるコマンド、ハッシュや JSON の値が合うファイル、期待どおりのステータスと本文で応答する URL
+
+```
+Done = command ["bun","test"] stdout~" 0 fail"; file qa/report.json json:.passed=true; url http://localhost:3000/health body~"ready"
+```
+
+watcher はレーンを閉じるときに、シェルを通さずこの確認を自分で実行し直し、レーンの言い分をそのまま信じることはありません。解釈できないシグナルは、レーンの起動時に拒否します。文法の全体は [`references/sessions.md`](skills/dori-mode/references/sessions.md) にあります。
 
 ## コマンド
 

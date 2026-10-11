@@ -3,7 +3,7 @@ import type { FlowDeps } from "./done-flow.ts";
 import { readScreen } from "./panes.ts";
 import { LANE_KEY, type Lane } from "./registry.ts";
 import { iso } from "./run.ts";
-import { splitDone, UNREADABLE, checkSignal } from "./signals.ts";
+import { doneSyntaxErrors } from "./signals.ts";
 
 export type LaunchInput = {
   readonly key: string;
@@ -22,10 +22,8 @@ const STARTUP_FAILURE = /Cannot find module|All fallback models failed|No API ke
 export const validateLaunch = async (deps: FlowDeps, input: LaunchInput): Promise<void> => {
   if (!LANE_KEY.test(input.key)) throw new LaunchError(`key must match ${LANE_KEY}`);
   if (await deps.registry.read(input.key)) throw new LaunchError(`lane ${input.key} is already registered`);
-  const noRun = async () => ({ code: 1, out: "", err: "" });
-  const unreadable = [];
-  for (const part of splitDone(input.done)) if ((await checkSignal(part, noRun)).detail === UNREADABLE) unreadable.push(part);
-  if (!splitDone(input.done).length || unreadable.length) throw new LaunchError(`Done line is not checkable: ${unreadable.join("; ") || "(empty)"}`);
+  const errors = doneSyntaxErrors(input.done);
+  if (errors.length) throw new LaunchError(`Done line is not checkable: ${errors.join("; ")}`);
 };
 
 export const footer = (lane: Lane, leadPane: string): string => [

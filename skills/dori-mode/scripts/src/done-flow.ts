@@ -4,7 +4,7 @@ import { type DoriConfig, fill } from "./config.ts";
 import { type Lane, type Registry, statusOf, withStatus } from "./registry.ts";
 import { type Clock, iso, type Runner } from "./run.ts";
 import { sendVerified } from "./panes.ts";
-import { checkDone } from "./signals.ts";
+import { checkDone, type SignalIo } from "./signals.ts";
 
 export type FlowDeps = {
   readonly run: Runner;
@@ -12,7 +12,10 @@ export type FlowDeps = {
   readonly registry: Registry;
   readonly config: DoriConfig;
   readonly exists?: (path: string) => boolean;
+  readonly signalIo?: SignalIo;
 };
+
+const signalIo = (deps: FlowDeps, lane: Lane): SignalIo => ({ cwd: lane.cwd ?? deps.config.defaultCwd, ...deps.signalIo });
 
 const windowMs = (deps: FlowDeps): number => deps.config.closeAfterMin * 60_000;
 
@@ -63,7 +66,7 @@ export const unpushedWork = async (deps: FlowDeps, lane: Lane): Promise<string[]
 
 export const closeLane = async (deps: FlowDeps, lane: Lane, note: string): Promise<{ readonly closed: boolean; readonly lines: string[] }> => {
   const exists = deps.exists ?? existsSync;
-  const checks = await checkDone(lane.done, deps.run);
+  const checks = await checkDone(lane.done, deps.run, signalIo(deps, lane));
   const lines = checks.map((c) => `SIGNAL ${c.ok ? "OK " : "NOT"} ${c.signal} -> ${c.detail}`);
   if (checks.some((c) => !c.ok)) return { closed: false, lines: [...lines, `REFUSED ${lane.key}: a Done signal is not live`] };
   const cleanup: string[] = [];
@@ -88,7 +91,7 @@ export const closeLane = async (deps: FlowDeps, lane: Lane, note: string): Promi
 const settle = async (deps: FlowDeps, lane: Lane, evidence: string): Promise<string> => {
   const blocked = await unpushedWork(deps, lane);
   if (blocked.length) return objectDone(deps, lane, blocked);
-  const failing = (await checkDone(lane.done, deps.run)).filter((c) => !c.ok).map((c) => `${c.signal} -> ${c.detail}`);
+  const failing = (await checkDone(lane.done, deps.run, signalIo(deps, lane))).filter((c) => !c.ok).map((c) => `${c.signal} -> ${c.detail}`);
   if (failing.length) return objectDone(deps, lane, failing);
   const verified = withStatus(lane, "verified-done", "Done signals read back live", iso(deps.clock));
   await deps.registry.write(verified);
