@@ -124,7 +124,7 @@ The watcher runs each check itself when it closes the lane, with no shell, and n
 | `dori guard [--loop MIN]` | alert on load, memory, disk and pane count |
 | `dori heavy <label> -- <cmd>` | run a build or test suite only when a slot is free and load is low |
 
-Text sent to a pane always goes as one argument, never through a shell string, and the CLI checks that Enter actually landed.
+Text sent to a pane always goes as one argument, never through a shell string, and the CLI reports each send as delivered or unconfirmed.
 
 ## Utilities
 

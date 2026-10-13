@@ -14,7 +14,11 @@ export type World = {
   dirty: string;
   stuckReads: number;
   screen: string;
-  panes: { pane_id: string; workspace_id: string; agent?: string; title?: string; cwd?: string }[];
+  panes: { pane_id: string; workspace_id: string; agent?: string; agent_status?: string; title?: string; cwd?: string }[];
+  /** agent_status the target pane moves to when Enter is pressed (models a lane picking up the message). */
+  onEnterStatus?: string;
+  /** Screens returned by successive reads; falls back to `screen` when empty. */
+  screens?: string[];
   calls: string[][];
 };
 
@@ -31,7 +35,12 @@ export const fakeRunner = (w: World): Runner => async (argv) => {
       w.stuckReads--;
       return ok("❯ [LEAD] stuck text still here");
     }
-    return ok(w.screen);
+    return ok(w.screens?.length ? (w.screens.shift() ?? w.screen) : w.screen);
+  }
+  if (cmd === "herdr" && a1 === "pane" && a2 === "send-keys" && w.onEnterStatus) {
+    const p = w.panes.find((x) => x.pane_id === argv[3]);
+    if (p) p.agent_status = w.onEnterStatus;
+    return ok();
   }
   if (cmd === "herdr" && a1 === "pane" && a2 === "list") return ok(JSON.stringify({ result: { panes: w.panes } }));
   if (cmd === "herdr") return ok();

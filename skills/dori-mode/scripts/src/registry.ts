@@ -30,6 +30,12 @@ export type Lane = {
   readonly lastReplyAt?: number;
   readonly lastNudgeAt?: number;
   readonly lastAutoReplyAt?: number;
+  /** The [REPORT] line the freshness sweep last posted, so a stale screen is never posted twice. */
+  readonly lastPostedReport?: string;
+  /** The [REPORT] line seen on the previous freshness tick (a line is posted only once it holds across two ticks). */
+  readonly lastSeenReport?: string;
+  /** The last held-back freshness outcome, so a quiet lane logs each state change once, not every tick. */
+  readonly lastFreshnessNote?: string;
   readonly receipt?: unknown;
 };
 

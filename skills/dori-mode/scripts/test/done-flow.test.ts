@@ -91,10 +91,24 @@ test("closing directly refuses while a signal is not live and leaves the pane al
   expect(closedVia()).toHaveLength(0);
 });
 
-test("text still sitting in the pane input gets another Enter until it is gone", async () => {
-  world.stuckReads = 1;
-  expect(await sendVerified(at(T0).run, at(T0).clock, "w:p1", "[LEAD] stuck text still here")).toBe(true);
-  expect(world.calls.filter((c) => c[2] === "send-keys")).toHaveLength(2);
+test("delivery is confirmed by the pane's agent status moving to working, with exactly one Enter", async () => {
+  world.panes = [{ pane_id: "w:p1", workspace_id: "w", agent: "pi", agent_status: "idle" }];
+  world.onEnterStatus = "working";
+  expect(await sendVerified(at(T0).run, at(T0).clock, "w:p1", "[LEAD] please report")).toBe("delivered");
+  expect(world.calls.filter((c) => c[2] === "send-keys")).toHaveLength(1);
+});
+
+test("a screen that still shows the text never causes another Enter; no status change is unconfirmed", async () => {
+  world.panes = [{ pane_id: "w:p1", workspace_id: "w", agent: "pi", agent_status: "idle" }];
+  world.stuckReads = 10;
+  expect(await sendVerified(at(T0).run, at(T0).clock, "w:p1", "[LEAD] stuck text still here")).toBe("unconfirmed");
+  expect(world.calls.filter((c) => c[2] === "send-keys")).toHaveLength(1);
+});
+
+test("a pane that was already working cannot show a change, so the send is unconfirmed, not delivered", async () => {
+  world.panes = [{ pane_id: "w:p1", workspace_id: "w", agent: "pi", agent_status: "working" }];
+  expect(await sendVerified(at(T0).run, at(T0).clock, "w:p1", "[LEAD] queued while busy")).toBe("unconfirmed");
+  expect(world.calls.filter((c) => c[2] === "send-keys")).toHaveLength(1);
 });
 
 test("text with a backtick never reaches a pane", async () => {

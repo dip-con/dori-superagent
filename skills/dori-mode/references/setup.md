@@ -65,9 +65,9 @@ Arm these as persistent monitors in your own session:
 |---|---|---|
 | inbound messages | your messenger's watch command | new owner messages |
 | done flow | `dori watch` | `^LANE_` |
-| dead panes | `dori dead-panes --loop 3` | `^DEAD_PANE` |
+| dead panes | `dori dead-panes --loop 3` | `^(DEAD_PANE\|UNRECOGNISED_PANE)` |
 | host guard | `dori guard --loop 1` | `^HOST_GUARD` |
-| freshness | `dori freshness --loop 5` | `^(NUDGED\|POSTED\|NO-REPORT)` |
+| freshness | `dori freshness --loop 5` | `^(NUDGED\|POSTED\|NO-REPORT\|PENDING-REPORT\|STALE-REPORT)` |
 | Slack inbound (Slack only) | `dori inbound slack --loop 1` | `^INBOUND` |
 | presence (optional) | `dori presence slack` or `dori presence discord` | `^PRESENCE_READY` |
 

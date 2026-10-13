@@ -2,7 +2,7 @@
 import { parseArgs } from "node:util";
 
 import { loadConfig } from "./config.ts";
-import { deadPaneTick } from "./dead-panes.ts";
+import { deadPaneTick, newDeadPaneState } from "./dead-panes.ts";
 import { claimDone, closeLane, type FlowDeps, objectDone, watchTick } from "./done-flow.ts";
 import { freshnessTick } from "./freshness.ts";
 import { acquireSlot, pidAlive, releaseSlot } from "./heavy-slot.ts";
@@ -134,8 +134,9 @@ try {
       break;
     case "dead-panes": {
       const seen = new Set<string>();
+      const paneState = newDeadPaneState();
       await every(loopMin, async () => {
-        for (const line of await deadPaneTick(run, config, seen, new Date().toISOString().slice(0, 13))) console.log(line);
+        for (const line of await deadPaneTick(run, config, seen, new Date().toISOString().slice(0, 13), paneState)) console.log(line);
       });
       break;
     }

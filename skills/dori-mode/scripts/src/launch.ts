@@ -1,6 +1,6 @@
 import { fill } from "./config.ts";
 import type { FlowDeps } from "./done-flow.ts";
-import { readScreen } from "./panes.ts";
+import { readScreen, statusLookup } from "./panes.ts";
 import { LANE_KEY, type Lane } from "./registry.ts";
 import { iso } from "./run.ts";
 import { doneSyntaxErrors } from "./signals.ts";
@@ -61,8 +61,16 @@ export const launchLane = async (deps: FlowDeps, input: LaunchInput): Promise<{ 
   const lane: Lane = { ...draft, pane, ...(tab ? { tab } : {}) };
   await deps.registry.write(lane);
   await deps.clock.sleep(20_000);
-  const bad = STARTUP_FAILURE.exec(await readScreen(deps.run, pane, 40));
-  return { lane, startup: bad ? `STARTUP_ERROR ${input.key} ${pane}: ${bad[0]}` : `STARTUP_OK ${input.key} ${pane}` };
+  const screen = await readScreen(deps.run, pane, 40);
+  const bad = STARTUP_FAILURE.exec(screen);
+  if (bad) return { lane, startup: `STARTUP_ERROR ${input.key} ${pane}: ${bad[0]}` };
+  const { status, error } = await statusLookup(deps.run, pane);
+  if (status === "idle" || status === "working") return { lane, startup: `STARTUP_OK ${input.key} ${pane}` };
+  const why = error ? `status lookup failed: ${error}` : `no ready agent status (${status ?? "none"})`;
+  return { lane, startup: `STARTUP_UNCONFIRMED ${input.key} ${pane}: ${why}; last lines: ${lastLines(screen)}` };
 };
+
+const lastLines = (screen: string): string =>
+  screen.split("\n").map((s) => s.trim()).filter(Boolean).slice(-3).join(" / ").replace(/\/(Users|home|Volumes|private)\/\S+/g, "(local path)").slice(0, 240) || "(blank)";
 
 export const quoteForPane = (arg: string): string => (/^[\w./:@=-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, `'\\''`)}'`);
