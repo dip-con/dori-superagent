@@ -17,7 +17,27 @@ export type LaunchInput = {
 
 export class LaunchError extends Error {}
 
-const STARTUP_FAILURE = /Cannot find module|All fallback models failed|No API key|model_not_available|usage limit|rate limit|quota|Session crashed|unknown provider/i;
+// adapted from dev-bokdong/dori-mode (MIT): bare failure words count only after "Error:"/"fatal" or at a line start, and
+// tips, recalled-memory/Kibitzer blocks and echoes of the launch prompt ("lane brief at ...") are skipped.
+const FAILURE_WORDS = /Cannot find module|All fallback models failed|No API key|model_not_available|usage limit|rate limit|quota|Session crashed|unknown provider/i;
+const FAILURE_LINE = /^(?:Cannot find module|All fallback models failed|No API key|model_not_available|unknown provider|Session crashed|(?:you(?:'ve| have) (?:hit|reached|exceeded) (?:your |the )?)?(?:(?:usage|rate) limit|quota)\s+(?:reached|exceeded|hit|exhausted|error))/i;
+const LEAD_IN = /^[\s│|>•*✗✖×!⚠❌-]*/;
+
+export const startupFailure = (screen: string): string | undefined => {
+  let skipping = false;
+  for (const raw of screen.split("\n")) {
+    const line = raw.replace(LEAD_IN, "");
+    if (!line.trim()) { skipping = false; continue; }
+    if (/^Tip:|^Want the full story on any tip/i.test(line)) { skipping = true; continue; }
+    if (/<recalled-memory|Kibitzer/i.test(raw)) skipping = true;
+    if (/<\/recalled-memory>/i.test(raw)) { skipping = false; continue; }
+    if (skipping || /lane brief at /i.test(raw)) continue;
+    const error = /^(?:error|fatal)\b[:\s-]*/i.exec(line);
+    const hit = error ? FAILURE_WORDS.exec(line.slice(error[0].length)) : FAILURE_LINE.exec(line);
+    if (hit) return hit[0];
+  }
+  return undefined;
+};
 
 export const validateLaunch = async (deps: FlowDeps, input: LaunchInput): Promise<void> => {
   if (!LANE_KEY.test(input.key)) throw new LaunchError(`key must match ${LANE_KEY}`);
@@ -68,8 +88,8 @@ export const launchLane = async (deps: FlowDeps, input: LaunchInput): Promise<{ 
   });
   await deps.clock.sleep(20_000);
   const screen = await readScreen(deps.run, pane, 40);
-  const bad = STARTUP_FAILURE.exec(screen);
-  if (bad) return { lane, startup: `STARTUP_ERROR ${input.key} ${pane}: ${bad[0]}` };
+  const bad = startupFailure(screen);
+  if (bad) return { lane, startup: `STARTUP_ERROR ${input.key} ${pane}: ${bad}` };
   const { status, error } = await statusLookup(deps.run, pane);
   if (status === "idle" || status === "working") return { lane, startup: `STARTUP_OK ${input.key} ${pane}` };
   const why = error ? `status lookup failed: ${error}` : `no ready agent status (${status ?? "none"})`;
