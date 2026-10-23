@@ -32,8 +32,8 @@ export const freshnessTick = async (deps: FlowDeps, home: string): Promise<Sweep
     let current = lane;
     if (silentMin >= deps.config.nudgeAfterMin && (current.lastNudgeAt ?? 0) < heard) {
       const delivery = await sendVerified(deps.run, deps.clock, lane.pane, `[LEAD] your work thread has had no update for ${silentMin} min. Post a 1-2 sentence progress line (done since last, next) and keep its status true.`);
-      current = { ...current, lastNudgeAt: now };
-      await deps.registry.write(current);
+      const nudged = current;
+      current = (await deps.registry.update(lane.key, (cur) => ({ ...(cur ?? nudged), lastNudgeAt: now }))) ?? { ...current, lastNudgeAt: now };
       acts.push({ kind: "nudged", lane: lane.key, detail: `${silentMin} min silent, delivery ${delivery}` });
     }
     const hook = deps.config.hooks.threadReply;
@@ -41,7 +41,8 @@ export const freshnessTick = async (deps: FlowDeps, home: string): Promise<Sweep
       const report = lastReportLine(await readScreen(deps.run, lane.pane, 200), lane.key);
       // The two reads are a full loop interval apart: a line counts only once it is still there on the next tick.
       const seenBefore = current.lastSeenReport;
-      current = { ...current, lastSeenReport: report ?? undefined };
+      const seen = report ?? undefined;
+      current = { ...current, lastSeenReport: seen };
       let hold: { kind: SweepAct["kind"]; detail: string } | null = null;
       if (!report) hold = { kind: "no-report", detail: "pane has no [REPORT] line" };
       else if (report !== seenBefore) hold = { kind: "pending-report", detail: "a new [REPORT] line; posting once it holds on the next tick" };
@@ -49,12 +50,14 @@ export const freshnessTick = async (deps: FlowDeps, home: string): Promise<Sweep
       if (hold) {
         const note = `${hold.kind}|${hold.detail}|${report ?? ""}`;
         if (note !== current.lastFreshnessNote) acts.push({ kind: hold.kind, lane: lane.key, detail: hold.detail });
-        await deps.registry.write({ ...current, lastFreshnessNote: note });
+        const held = current;
+        await deps.registry.update(lane.key, (cur) => ({ ...(cur ?? held), lastSeenReport: seen, lastFreshnessNote: note }));
         continue;
       }
       const text = `Progress (from the lane's last report): ${scrubForThread(report ?? "", home)}`;
       await deps.run(fill(hook, { thread: lane.thread, text, key: lane.key }));
-      await deps.registry.write({ ...current, lastAutoReplyAt: now, lastPostedReport: report ?? undefined, lastFreshnessNote: undefined });
+      const posted = current;
+      await deps.registry.update(lane.key, (cur) => ({ ...(cur ?? posted), lastSeenReport: seen, lastAutoReplyAt: now, lastPostedReport: report ?? undefined, lastFreshnessNote: undefined }));
       acts.push({ kind: "posted", lane: lane.key, detail: text });
     }
   }

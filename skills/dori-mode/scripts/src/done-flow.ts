@@ -21,7 +21,7 @@ const windowMs = (deps: FlowDeps): number => deps.config.closeAfterMin * 60_000;
 
 export const claimDone = async (deps: FlowDeps, lane: Lane, evidence: string): Promise<string> => {
   const at = iso(deps.clock);
-  await deps.registry.write(withStatus(lane, "done-claimed", evidence, at, { claim: { at, evidence, emitted: false } }));
+  await deps.registry.update(lane.key, (cur) => withStatus(cur ?? lane, "done-claimed", evidence, at, { claim: { at, evidence, emitted: false } }));
   if (lane.pane) {
     const closesAt = new Date(deps.clock.now() + windowMs(deps)).toISOString().slice(11, 16);
     await sendVerified(deps.run, deps.clock, lane.pane, `[LEAD] done claim recorded for ${lane.key}: this lane closes automatically at ${closesAt}Z (${deps.config.closeAfterMin} minutes) unless the lead objects with reasons. Stay idle until then; an objection arrives here as [LEAD] not done.`);
@@ -31,7 +31,7 @@ export const claimDone = async (deps: FlowDeps, lane: Lane, evidence: string): P
 
 export const objectDone = async (deps: FlowDeps, lane: Lane, reasons: readonly string[]): Promise<string> => {
   const at = iso(deps.clock);
-  await deps.registry.write(withStatus(lane, "not-done", reasons.join("; "), at, { objection: { at, reasons } }));
+  await deps.registry.update(lane.key, (cur) => withStatus(cur ?? lane, "not-done", reasons.join("; "), at, { objection: { at, reasons } }));
   if (lane.pane) await sendVerified(deps.run, deps.clock, lane.pane, `[LEAD] not done: ${reasons.join("; ")}; keep working, claim again when fixed`);
   return `LANE_NOT_DONE ${lane.key} ${reasons.join("; ")}`;
 };
@@ -84,7 +84,7 @@ export const closeLane = async (deps: FlowDeps, lane: Lane, note: string): Promi
   }
   const at = iso(deps.clock);
   const receipt = { checks, note, cleanup };
-  await deps.registry.write(withStatus(lane, "closed", note, at, { closedAt: at, receipt }));
+  await deps.registry.update(lane.key, (cur) => withStatus(cur ?? lane, "closed", note, at, { closedAt: at, receipt }));
   return { closed: true, lines: [...lines, `CLOSED ${lane.key} ${JSON.stringify(receipt)}`] };
 };
 
@@ -93,8 +93,8 @@ const settle = async (deps: FlowDeps, lane: Lane, evidence: string): Promise<str
   if (blocked.length) return objectDone(deps, lane, blocked);
   const failing = (await checkDone(lane.done, deps.run, signalIo(deps, lane))).filter((c) => !c.ok).map((c) => `${c.signal} -> ${c.detail}`);
   if (failing.length) return objectDone(deps, lane, failing);
-  const verified = withStatus(lane, "verified-done", "Done signals read back live", iso(deps.clock));
-  await deps.registry.write(verified);
+  const at = iso(deps.clock);
+  const verified = (await deps.registry.update(lane.key, (cur) => withStatus(cur ?? lane, "verified-done", "Done signals read back live", at))) ?? lane;
   const result = await closeLane(deps, verified, `Done: ${evidence}`);
   if (!result.closed) return objectDone(deps, (await deps.registry.read(lane.key)) ?? verified, result.lines.filter((l) => l.startsWith("SIGNAL NOT")));
   return `LANE_CLOSED ${lane.key} ${result.lines.at(-1)?.split(" ").slice(2).join(" ") ?? ""}`;
@@ -108,8 +108,7 @@ export const watchTick = async (deps: FlowDeps): Promise<string[]> => {
     const claim = listed.claim;
     if (!claim.emitted) {
       out.push(`LANE_DONE_CLAIMED ${lane.key} ${lane.pane ?? "-"} ${claim.evidence}`);
-      lane = { ...lane, claim: { ...claim, emitted: true } };
-      await deps.registry.write(lane);
+      lane = (await deps.registry.update(lane.key, (cur) => ({ ...(cur ?? lane), claim: { ...claim, emitted: true } }))) ?? lane;
     }
     if (deps.clock.now() - Date.parse(claim.at) < windowMs(deps)) continue;
     out.push(await settle(deps, lane, claim.evidence));

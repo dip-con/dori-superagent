@@ -39,7 +39,10 @@ export const footer = (lane: Lane, leadPane: string): string => [
 export const adoptLane = async (deps: FlowDeps, input: LaunchInput & { readonly pane: string }): Promise<Lane> => {
   await validateLaunch(deps, input);
   const lane: Lane = { key: input.key, title: input.title, thread: input.thread ?? "none", pane: input.pane, brief: input.brief, done: input.done, cwd: input.cwd ?? deps.config.defaultCwd, openedAt: iso(deps.clock) };
-  await deps.registry.write(lane);
+  await deps.registry.update(lane.key, (cur) => {
+    if (cur) throw new LaunchError(`lane ${lane.key} is already registered`);
+    return lane;
+  });
   return lane;
 };
 
@@ -59,7 +62,10 @@ export const launchLane = async (deps: FlowDeps, input: LaunchInput): Promise<{ 
   const prompt = `${deps.config.launchKeywords}. Read and execute the lane brief at ${input.brief} in full. You are the ${input.key} lane; report as the brief's footer says.`;
   await deps.run(["herdr", "pane", "run", pane, fill(deps.config.agentCommand, { model, prompt }).map(quoteForPane).join(" ")]);
   const lane: Lane = { ...draft, pane, ...(tab ? { tab } : {}) };
-  await deps.registry.write(lane);
+  await deps.registry.update(lane.key, (cur) => {
+    if (cur) throw new LaunchError(`lane ${lane.key} is already registered`);
+    return lane;
+  });
   await deps.clock.sleep(20_000);
   const screen = await readScreen(deps.run, pane, 40);
   const bad = STARTUP_FAILURE.exec(screen);
