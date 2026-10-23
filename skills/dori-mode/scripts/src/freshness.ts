@@ -18,20 +18,33 @@ export const scrubForThread = (line: string, home: string): string =>
     .replace(/`/g, "'")
     .trim();
 
-export type SweepAct = { readonly kind: "nudged" | "posted" | "no-report" | "pending-report" | "stale-report"; readonly lane: string; readonly detail: string };
+export type SweepAct = { readonly kind: "nudged" | "no-nudge" | "posted" | "no-report" | "pending-report" | "stale-report"; readonly lane: string; readonly detail: string };
+
+/** noNudge: report a due nudge as a NO-NUDGE line instead of sending it (redesign S9: the supervisor nudge policy sends).
+ *  only: restrict the sweep to one lane key. */
+export type FreshnessOpts = { readonly noNudge?: boolean; readonly only?: string };
 
 const lastHeard = (lane: Lane): number => lane.lastReplyAt ?? Date.parse(lane.openedAt);
 
-export const freshnessTick = async (deps: FlowDeps, home: string): Promise<SweepAct[]> => {
+export const freshnessTick = async (deps: FlowDeps, home: string, opts: FreshnessOpts = {}): Promise<SweepAct[]> => {
   const acts: SweepAct[] = [];
   const now = deps.clock.now();
   for (const lane of await deps.registry.open()) {
     if (statusOf(lane) !== "working" || !lane.pane) continue;
+    if (opts.only && lane.key !== opts.only) continue;
     const heard = lastHeard(lane);
     const silentMin = Math.round((now - heard) / 60_000);
     let current = lane;
-    if (silentMin >= deps.config.nudgeAfterMin && (current.lastNudgeAt ?? 0) < heard) {
-      const delivery = await sendVerified(deps.run, deps.clock, lane.pane, `[LEAD] your work thread has had no update for ${silentMin} min. Post a 1-2 sentence progress line (done since last, next) and keep its status true.`);
+    if (silentMin >= deps.config.nudgeAfterMin && (current.lastNudgeAt ?? 0) < heard && opts.noNudge) {
+      // One NO-NUDGE line per silence episode (kept in its own field; lastFreshnessNote belongs to the report hold).
+      if ((current as Lane & { lastNudgeProposal?: number }).lastNudgeProposal !== heard) {
+        acts.push({ kind: "no-nudge", lane: lane.key, detail: `${silentMin} min silent: nudge due, not sent (--no-nudge) -> propose: bun ~/.omocat/sess.ts send ${lane.key} "<progress request>"` });
+        const proposed = current;
+        current = (await deps.registry.update(lane.key, (cur) => ({ ...(cur ?? proposed), lastNudgeProposal: heard }) as Lane)) ?? current;
+      }
+    } else if (silentMin >= deps.config.nudgeAfterMin && (current.lastNudgeAt ?? 0) < heard) {
+      // One id per silence episode: a retry of the same nudge never becomes a second message.
+      const delivery = await sendVerified(deps.run, deps.clock, lane.pane, `[LEAD] your work thread has had no update for ${silentMin} min. Post a 1-2 sentence progress line (done since last, next) and keep its status true.`, lane.key, `nudge:${lane.key}:h${heard}:1`);
       const nudged = current;
       current = (await deps.registry.update(lane.key, (cur) => ({ ...(cur ?? nudged), lastNudgeAt: now }))) ?? { ...current, lastNudgeAt: now };
       acts.push({ kind: "nudged", lane: lane.key, detail: `${silentMin} min silent, delivery ${delivery}` });

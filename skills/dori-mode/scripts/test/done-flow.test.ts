@@ -94,24 +94,24 @@ test("closing directly refuses while a signal is not live and leaves the pane al
 test("delivery is confirmed by the pane's agent status moving to working, with exactly one Enter", async () => {
   world.panes = [{ pane_id: "w:p1", workspace_id: "w", agent: "pi", agent_status: "idle" }];
   world.onEnterStatus = "working";
-  expect(await sendVerified(at(T0).run, at(T0).clock, "w:p1", "[LEAD] please report")).toBe("delivered");
+  expect(await sendVerified(at(T0).run, at(T0).clock, "w:p1", "[LEAD] please report", "demo")).toBe("delivered");
   expect(world.calls.filter((c) => c[2] === "send-keys")).toHaveLength(1);
 });
 
 test("a screen that still shows the text never causes another Enter; no status change is unconfirmed", async () => {
   world.panes = [{ pane_id: "w:p1", workspace_id: "w", agent: "pi", agent_status: "idle" }];
   world.stuckReads = 10;
-  expect(await sendVerified(at(T0).run, at(T0).clock, "w:p1", "[LEAD] stuck text still here")).toBe("unconfirmed");
+  expect(await sendVerified(at(T0).run, at(T0).clock, "w:p1", "[LEAD] stuck text still here", "demo")).toBe("unconfirmed");
   expect(world.calls.filter((c) => c[2] === "send-keys")).toHaveLength(1);
 });
 
 test("a pane that was already working cannot show a change, so the send is unconfirmed, not delivered", async () => {
   world.panes = [{ pane_id: "w:p1", workspace_id: "w", agent: "pi", agent_status: "working" }];
-  expect(await sendVerified(at(T0).run, at(T0).clock, "w:p1", "[LEAD] queued while busy")).toBe("unconfirmed");
+  expect(await sendVerified(at(T0).run, at(T0).clock, "w:p1", "[LEAD] queued while busy", "demo")).toBe("unconfirmed");
   expect(world.calls.filter((c) => c[2] === "send-keys")).toHaveLength(1);
 });
 
 test("text with a backtick never reaches a pane", async () => {
-  await expect(sendVerified(at(T0).run, at(T0).clock, "w:p1", "run `rm -rf`")).rejects.toBeInstanceOf(UnsafeTextError);
+  await expect(sendVerified(at(T0).run, at(T0).clock, "w:p1", "run `rm -rf`", "demo")).rejects.toBeInstanceOf(UnsafeTextError);
   expect(world.calls).toHaveLength(0);
 });

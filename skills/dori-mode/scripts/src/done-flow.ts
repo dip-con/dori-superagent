@@ -24,7 +24,7 @@ export const claimDone = async (deps: FlowDeps, lane: Lane, evidence: string): P
   await deps.registry.update(lane.key, (cur) => withStatus(cur ?? lane, "done-claimed", evidence, at, { claim: { at, evidence, emitted: false } }));
   if (lane.pane) {
     const closesAt = new Date(deps.clock.now() + windowMs(deps)).toISOString().slice(11, 16);
-    await sendVerified(deps.run, deps.clock, lane.pane, `[LEAD] done claim recorded for ${lane.key}: this lane closes automatically at ${closesAt}Z (${deps.config.closeAfterMin} minutes) unless the lead objects with reasons. Stay idle until then; an objection arrives here as [LEAD] not done.`);
+    await sendVerified(deps.run, deps.clock, lane.pane, `[LEAD] done claim recorded for ${lane.key}: this lane closes automatically at ${closesAt}Z (${deps.config.closeAfterMin} minutes) unless the lead objects with reasons. Stay idle until then; an objection arrives here as [LEAD] not done.`, lane.key);
   }
   return `LANE_DONE_CLAIMED ${lane.key} ${lane.pane ?? "-"} ${evidence}`;
 };
@@ -32,7 +32,7 @@ export const claimDone = async (deps: FlowDeps, lane: Lane, evidence: string): P
 export const objectDone = async (deps: FlowDeps, lane: Lane, reasons: readonly string[]): Promise<string> => {
   const at = iso(deps.clock);
   await deps.registry.update(lane.key, (cur) => withStatus(cur ?? lane, "not-done", reasons.join("; "), at, { objection: { at, reasons } }));
-  if (lane.pane) await sendVerified(deps.run, deps.clock, lane.pane, `[LEAD] not done: ${reasons.join("; ")}; keep working, claim again when fixed`);
+  if (lane.pane) await sendVerified(deps.run, deps.clock, lane.pane, `[LEAD] not done: ${reasons.join("; ")}; keep working, claim again when fixed`, lane.key);
   return `LANE_NOT_DONE ${lane.key} ${reasons.join("; ")}`;
 };
 
@@ -56,7 +56,8 @@ export const unpushedWork = async (deps: FlowDeps, lane: Lane): Promise<string[]
   const reasons: string[] = [];
   for (const wt of await discoverWorktrees(lane, deps.run, [deps.config.defaultCwd])) {
     if (!exists(wt)) continue;
-    const dirty = await deps.run(["git", "-C", wt, "status", "--porcelain", "--untracked-files=no"]);
+    // Untracked files count as unpushed: `git worktree remove` would delete them with the worktree.
+    const dirty = await deps.run(["git", "-C", wt, "status", "--porcelain"]);
     const ahead = await deps.run(["git", "-C", wt, "rev-list", "--count", "HEAD", "--not", "--remotes"]);
     if (dirty.code !== 0 || ahead.code !== 0) reasons.push(`unpushed work in ${wt} (git state unreadable)`);
     else if (dirty.out.trim() || Number(ahead.out.trim()) > 0) reasons.push(`unpushed work in ${wt}`);
@@ -70,6 +71,13 @@ export const closeLane = async (deps: FlowDeps, lane: Lane, note: string): Promi
   const lines = checks.map((c) => `SIGNAL ${c.ok ? "OK " : "NOT"} ${c.signal} -> ${c.detail}`);
   if (checks.some((c) => !c.ok)) return { closed: false, lines: [...lines, `REFUSED ${lane.key}: a Done signal is not live`] };
   const cleanup: string[] = [];
+  // Worktrees go first: if one cannot be removed, the lane and its pane stay so the work is still reachable.
+  const root = lane.cwd ?? deps.config.defaultCwd;
+  for (const wt of (await discoverWorktrees(lane, deps.run, [deps.config.defaultCwd])).filter(exists)) {
+    const r = await deps.run(["git", "-C", root, "worktree", "remove", wt]);
+    if (r.code !== 0) return { closed: false, lines: [...lines, ...cleanup.map((c) => `CLEANUP ${c}`), `REFUSED ${lane.key}: worktree ${wt} not removed (${r.err.slice(0, 120)}); lane and pane kept`] };
+    cleanup.push(`worktree ${wt} removed`);
+  }
   const hook = deps.config.hooks.threadDone;
   if (hook && lane.thread !== "none") {
     const r = await deps.run(fill(hook, { thread: lane.thread, text: note, key: lane.key }));
@@ -77,11 +85,6 @@ export const closeLane = async (deps: FlowDeps, lane: Lane, note: string): Promi
   }
   if (lane.tab) cleanup.push((await deps.run(["herdr", "tab", "close", lane.tab])).code === 0 ? `tab ${lane.tab} closed` : `tab ${lane.tab} not closed`);
   else if (lane.pane) cleanup.push((await deps.run(["herdr", "pane", "close", lane.pane])).code === 0 ? `pane ${lane.pane} closed` : `pane ${lane.pane} not closed`);
-  const root = lane.cwd ?? deps.config.defaultCwd;
-  for (const wt of (await discoverWorktrees(lane, deps.run, [deps.config.defaultCwd])).filter(exists)) {
-    const r = await deps.run(["git", "-C", root, "worktree", "remove", wt]);
-    cleanup.push(r.code === 0 ? `worktree ${wt} removed` : `worktree ${wt} kept: ${r.err.slice(0, 120)}`);
-  }
   const at = iso(deps.clock);
   const receipt = { checks, note, cleanup };
   await deps.registry.update(lane.key, (cur) => withStatus(cur ?? lane, "closed", note, at, { closedAt: at, receipt }));
@@ -89,12 +92,23 @@ export const closeLane = async (deps: FlowDeps, lane: Lane, note: string): Promi
 };
 
 const settle = async (deps: FlowDeps, lane: Lane, evidence: string): Promise<string> => {
+  const claimAt = lane.claim?.at;
   const blocked = await unpushedWork(deps, lane);
   if (blocked.length) return objectDone(deps, lane, blocked);
   const failing = (await checkDone(lane.done, deps.run, signalIo(deps, lane))).filter((c) => !c.ok).map((c) => `${c.signal} -> ${c.detail}`);
   if (failing.length) return objectDone(deps, lane, failing);
   const at = iso(deps.clock);
-  const verified = (await deps.registry.update(lane.key, (cur) => withStatus(cur ?? lane, "verified-done", "Done signals read back live", at))) ?? lane;
+  // Verified only if the claim being settled is still the current one: an objection or a newer claim made meanwhile wins.
+  let superseded = false;
+  const verified = (await deps.registry.update(lane.key, (cur) => {
+    const now = cur ?? lane;
+    if (statusOf(now) !== "done-claimed" || now.claim?.at !== claimAt) {
+      superseded = true;
+      return now;
+    }
+    return withStatus(now, "verified-done", "Done signals read back live", at);
+  })) ?? lane;
+  if (superseded) return `LANE_SETTLE_SKIPPED ${lane.key} the claim of ${claimAt ?? "?"} was superseded (status ${statusOf(verified)}, claim ${verified.claim?.at ?? "none"})`;
   const result = await closeLane(deps, verified, `Done: ${evidence}`);
   if (!result.closed) return objectDone(deps, (await deps.registry.read(lane.key)) ?? verified, result.lines.filter((l) => l.startsWith("SIGNAL NOT")));
   return `LANE_CLOSED ${lane.key} ${result.lines.at(-1)?.split(" ").slice(2).join(" ") ?? ""}`;

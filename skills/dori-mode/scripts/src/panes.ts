@@ -1,4 +1,18 @@
+import { existsSync, readFileSync } from "node:fs";
+
 import type { Clock, Runner } from "./run.ts";
+
+const omocatHome = (): string => process.env.OMOCAT_HOME ?? `${process.env.HOME}/.omocat`;
+/** Kill switch file for the adapter path (redesign S9/S10). Present: lane messages go through `sess.ts send <key>`. */
+export const sendAdapterFlag = (): string => process.env.DORI_SEND_ADAPTER_FLAG ?? `${omocatHome()}/flags/dori.send-adapter`;
+export const sessScript = (): string => `${omocatHome()}/sess.ts`;
+/** The flag file lists the lane keys on the adapter path (whitespace/comma separated); an empty file means every lane (S10). */
+export const sendAdapterOn = (key: string): boolean => {
+  const f = sendAdapterFlag();
+  if (!existsSync(f)) return false;
+  const keys = readFileSync(f, "utf8").split(/[\s,]+/).filter(Boolean);
+  return keys.length === 0 || keys.includes(key);
+};
 
 export type Pane = {
   readonly pane_id: string;
@@ -39,12 +53,22 @@ export const statusLookup = async (run: Runner, pane: string): Promise<{ readonl
 export type Delivery = "delivered" | "unconfirmed" | "failed";
 
 /**
- * Types the text and presses Enter exactly once. Delivery is confirmed only by a state change: the pane's agent_status
- * moving to "working" from something else. A pane that was already working cannot show that change, so its send comes
- * back "unconfirmed" and the caller decides. The screen is never read here, and Enter is never pressed again.
+ * With the adapter flag present and naming this lane (or empty): `bun ~/.omocat/sess.ts send <key> <text> [--id <id>]` (RPC or receipt-checked herdr,
+ * chosen per lane by transport.json); exit 0 = delivered (persisted receipt), 3 = unconfirmed, anything else = failed.
+ * Nothing is typed into the pane on this path.
+ *
+ * Without the flag: types the text and presses Enter exactly once. Delivery is confirmed only by a state change: the
+ * pane's agent_status moving to "working" from something else. A pane that was already working cannot show that change,
+ * so its send comes back "unconfirmed" and the caller decides. The screen is never read here, and Enter is never pressed again.
  */
-export const sendVerified = async (run: Runner, clock: Clock, pane: string, text: string): Promise<Delivery> => {
+export const sendVerified = async (run: Runner, clock: Clock, pane: string, text: string, key: string, id?: string): Promise<Delivery> => {
   if (/`|\$\(/.test(text)) throw new UnsafeTextError("refusing to send text containing a backtick or $(");
+  if (sendAdapterOn(key)) {
+    const r = await run(["bun", sessScript(), "send", key, text, ...(id ? ["--id", id] : [])], { timeoutMs: 120_000 });
+    if (r.code === 0) return "delivered";
+    console.error(`sendVerified ${key}: sess.ts send exit ${r.code}: ${(r.err || r.out).slice(-200)}`);
+    return r.code === 3 ? "unconfirmed" : "failed";
+  }
   const before = await statusLookup(run, pane);
   if (before.error) console.error(`sendVerified ${pane}: status lookup failed before send: ${before.error}`);
   if ((await run(["herdr", "pane", "send-text", pane, text])).code !== 0) return "failed";
