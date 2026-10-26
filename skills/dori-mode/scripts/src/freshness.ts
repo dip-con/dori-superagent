@@ -15,7 +15,8 @@ export const lastReportLine = (screen: string, key: string): string | null => {
     if (!t || t.includes("[REPORT]") || /^[─━│╭╰❯>•\-]/.test(t)) break;
     parts.push(t);
   }
-  return parts.join(" ").replace(/["'\])\s,]+$/, "");
+  // A report typed inside a shell command ends at its closing quote; drop the command tail ("... && herdr pane send-keys ...").
+  return parts.join(" ").replace(/["']\s*(?:&&|\|\||;|\||\)).*$/, "").replace(/["'\])\s,]+$/, "");
 };
 
 export const scrubForThread = (line: string, home: string): string =>

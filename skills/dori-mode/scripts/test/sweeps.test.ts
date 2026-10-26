@@ -210,3 +210,8 @@ test("a report wrapped over several pane lines is read whole, up to the blank li
   const screen = ["", " [REPORT] quiet-lane | milestone | MR 236 merged, waiting for deploy. Backup is", " prod-before-order.dump. 4 review notes fixed.", "", " - Home: details follow"].join("\n");
   expect(lastReportLine(screen, "quiet-lane")).toBe("[REPORT] quiet-lane | milestone | MR 236 merged, waiting for deploy. Backup is prod-before-order.dump. 4 review notes fixed.");
 });
+
+test("a wrapped report sent from a shell command stops at the closing quote", () => {
+  const screen = [' $ herdr pane send-text w:p1 "[REPORT] quiet-lane | milestone | key saved, GTM via API only. MR 239', ' waiting for review." && herdr pane send-keys w:p1 Enter && echo sent', " ✓ <1s sent"].join("\n");
+  expect(lastReportLine(screen, "quiet-lane")).toBe("[REPORT] quiet-lane | milestone | key saved, GTM via API only. MR 239 waiting for review.");
+});
