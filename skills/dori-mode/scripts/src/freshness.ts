@@ -5,8 +5,17 @@ import { type Lane, statusOf } from "./registry.ts";
 
 export const lastReportLine = (screen: string, key: string): string | null => {
   const grammar = new RegExp(`\\[REPORT\\] ${key.replace(/[.]/g, "\\.")} \\| (milestone|blocker|question|done) \\| (?!<what)\\S`);
-  const hits = screen.split("\n").flatMap((l) => (grammar.test(l) ? [l.slice(l.indexOf("[REPORT]"))] : []));
-  return hits.at(-1)?.replace(/["'\])\s,]+$/, "") ?? null;
+  const lines = screen.split("\n");
+  const at = lines.findLastIndex((l) => grammar.test(l));
+  if (at < 0) return null;
+  // The pane wraps a long report over several screen lines; keep reading until a blank line or the next block.
+  const parts = [lines[at].slice(lines[at].indexOf("[REPORT]")).trim()];
+  for (const l of lines.slice(at + 1)) {
+    const t = l.trim();
+    if (!t || t.includes("[REPORT]") || /^[─━│╭╰❯>•\-]/.test(t)) break;
+    parts.push(t);
+  }
+  return parts.join(" ").replace(/["'\])\s,]+$/, "");
 };
 
 export const scrubForThread = (line: string, home: string): string =>
