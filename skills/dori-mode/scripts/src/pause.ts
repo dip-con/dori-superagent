@@ -20,9 +20,9 @@ const READ_BACK_TRIES = 8;
 const count = (screen: string, shown: RegExp): number => screen.match(shown)?.length ?? 0;
 
 /** Sends a goal command and confirms it from the screen: one more matching line than before it was sent. */
-const goalCommand = async (deps: FlowDeps, pane: string, text: string, shown: RegExp): Promise<"confirmed" | "unconfirmed" | "failed"> => {
+const goalCommand = async (deps: FlowDeps, pane: string, key: string, text: string, shown: RegExp): Promise<"confirmed" | "unconfirmed" | "failed"> => {
   const before = count(await readScreen(deps.run, pane, 200), shown);
-  if ((await sendVerified(deps.run, deps.clock, pane, text)) === "failed") return "failed";
+  if ((await sendVerified(deps.run, deps.clock, pane, text, key)) === "failed") return "failed";
   for (let attempt = 0; attempt < READ_BACK_TRIES; attempt++) {
     if (count(await readScreen(deps.run, pane, 200), shown) > before) return "confirmed";
     await deps.clock.sleep(700);
@@ -39,7 +39,7 @@ export const pauseLane = async (deps: FlowDeps, lane: Lane, note: string): Promi
   if (!PAUSABLE.has(status)) return { lane, lines: [`NOT_PAUSED ${lane.key} is ${status}, not working`], code: 2 };
   if (!lane.pane) return { lane, lines: [`PAUSE_UNVERIFIED ${lane.key} has no pane, so its goal cannot be paused`], code: 3 };
   // The goal first: stopping the running turn must not hand off to a goal continuation.
-  const goal = await goalCommand(deps, lane.pane, "/goal pause", PAUSED_SHOWN);
+  const goal = await goalCommand(deps, lane.pane, lane.key, "/goal pause", PAUSED_SHOWN);
   if (goal !== "confirmed") return { lane, lines: [`PAUSE_UNVERIFIED ${lane.key} /goal pause ${goal}; lane left ${status}`], code: 3 };
   const at = new Date(deps.clock.now()).toISOString();
   const paused = withStatus(lane, "paused", note, at, { pausedFrom: status, pausedSeenWorking: undefined, lastFreshnessNote: undefined });
@@ -52,7 +52,7 @@ export const pauseLane = async (deps: FlowDeps, lane: Lane, note: string): Promi
 export const resumeLane = async (deps: FlowDeps, lane: Lane, note: string): Promise<PauseResult> => {
   if (statusOf(lane) !== "paused") return { lane, lines: [`NOT_RESUMED ${lane.key} is ${statusOf(lane)}, not paused`], code: 2 };
   if (!lane.pane) return { lane, lines: [`RESUME_UNVERIFIED ${lane.key} has no pane, so its goal cannot be resumed`], code: 3 };
-  const goal = await goalCommand(deps, lane.pane, "/goal resume", RESUMED_SHOWN);
+  const goal = await goalCommand(deps, lane.pane, lane.key, "/goal resume", RESUMED_SHOWN);
   if (goal !== "confirmed") return { lane, lines: [`RESUME_UNVERIFIED ${lane.key} /goal resume ${goal}; lane left paused`], code: 3 };
   const now = deps.clock.now();
   // Quiet time starts again at the resume: a long pause must not turn into an instant nudge.

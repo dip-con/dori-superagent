@@ -7,6 +7,10 @@ import type { FlowDeps } from "../src/done-flow.ts";
 import { Registry } from "../src/registry.ts";
 import type { Clock, Ran, Runner } from "../src/run.ts";
 
+// Tests never read the real ~/.omocat/flags/dori.send-adapter (redesign S9): a live flag would move the keystroke tests
+// onto the adapter path. panes.test.ts points this at its own temp flag.
+process.env.DORI_SEND_ADAPTER_FLAG = join(tmpdir(), `dori-no-send-adapter-${process.pid}`, "dori.send-adapter");
+
 export type World = {
   prState: string;
   issueState: string;

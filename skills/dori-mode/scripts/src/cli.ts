@@ -34,7 +34,10 @@ const USAGE = `dori <command> [options]
   pause  <key> [--note TEXT]           the owner said wait: goal paused (read back), running turn stopped, no nudges; exit 3 if unconfirmed
   resume <key> [--note TEXT]           undo pause: goal resumed (read back), lane back to its earlier status
   watch                                long-running: emits LANE_* lines every 30 s
-  freshness [--loop MIN]               nudge silent lanes, post their last report via hooks.threadReply
+  freshness [--loop MIN] [--once] [--no-nudge] [--lane KEY]
+                                       nudge silent lanes (--no-nudge: print NO-NUDGE proposals, send nothing),
+                                       post their last report via hooks.threadReply; DORI_NUDGE_AFTER_MIN overrides
+                                       nudgeAfterMin only together with --lane
   dead-panes [--loop MIN]              print DEAD_PANE <id> for stopped agent panes
   guard [--loop MIN]                   host load, memory, disk and pane-count alerts
   heavy <label> -- <command ...>       run a heavy command when a slot is free and load is low
@@ -63,6 +66,7 @@ const flags = parseArgs({
     title: { type: "string" }, brief: { type: "string" }, done: { type: "string" }, thread: { type: "string" },
     model: { type: "string" }, cwd: { type: "string" }, pane: { type: "string" }, evidence: { type: "string" },
     reason: { type: "string", multiple: true }, note: { type: "string" }, write: { type: "boolean" }, loop: { type: "string" },
+    once: { type: "boolean" }, "no-nudge": { type: "boolean" }, lane: { type: "string" },
     to: { type: "string" }, text: { type: "string" }, edit: { type: "string" },
   },
 });
@@ -137,11 +141,17 @@ try {
         for (const line of await watchTick(deps).catch((e: unknown) => [`LANE_WATCH_WARN ${String(e).slice(0, 200)}`])) console.log(line);
         await Bun.sleep(30_000);
       }
-    case "freshness":
-      await every(loopMin, async () => {
-        for (const a of await freshnessTick(deps, process.env.HOME ?? "")) console.log(`${a.kind.toUpperCase()} ${a.lane} ${a.detail}`);
+    case "freshness": {
+      const only = opt("lane");
+      const override = process.env.DORI_NUDGE_AFTER_MIN;
+      if (override !== undefined && !only) die("DORI_NUDGE_AFTER_MIN needs --lane KEY (it would nudge every lane)");
+      const fdeps: FlowDeps = override !== undefined ? { ...deps, config: { ...config, nudgeAfterMin: Number(override) } } : deps;
+      const fopts = { noNudge: Boolean(flags.values["no-nudge"]), only };
+      await every(flags.values.once ? 0 : loopMin, async () => {
+        for (const a of await freshnessTick(fdeps, process.env.HOME ?? "", fopts)) console.log(`${a.kind.toUpperCase()} ${a.lane} ${a.detail}`);
       });
       break;
+    }
     case "dead-panes": {
       const seen = new Set<string>();
       const paneState = newDeadPaneState();

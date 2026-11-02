@@ -11,7 +11,10 @@ export type Signal =
   | { readonly kind: "published"; readonly pkg: string; readonly version: string }
   | { readonly kind: "command"; readonly argv: readonly string[]; readonly stdout?: RegExp }
   | { readonly kind: "file"; readonly path: string; readonly sha256?: string; readonly json?: { readonly path: readonly (string | number)[]; readonly value: unknown } }
-  | { readonly kind: "url"; readonly url: string; readonly status: number; readonly body?: RegExp };
+  | { readonly kind: "url"; readonly url: string; readonly status: number; readonly body?: RegExp }
+  | { readonly kind: "gitlab-merged" | "gitlab-closed"; readonly repo: string; readonly n: string }
+  | { readonly kind: "deployed"; readonly app: string; readonly sha: string }
+  | { readonly kind: "approved"; readonly key: string };
 
 export type SignalIo = { readonly http?: Http; readonly cwd?: string; readonly home?: string };
 
@@ -23,6 +26,7 @@ export const UNREADABLE = [
   'command ["argv","as","json"] [stdout~"regex"]',
   'file <path> [sha256=<hex>] [json:.a.b=<json value>]',
   'url <http(s) url> [status=200] [body~"regex"]',
+  "| merged gitlab:<group/repo>!N | closed gitlab:<group/repo>#N | deployed <app>@<sha> | approved <lane-key>",
 ].join(" ");
 
 export class SignalSyntaxError extends Error {}
@@ -56,6 +60,17 @@ const readJson = (s: string, i: number): { readonly value: unknown; readonly end
     return { value: text, end };
   }
 };
+
+// Dandori local signals (self-hosted GitLab, NAS deploy state, owner approval).
+export const GITLAB_HOST = process.env.DORI_GITLAB_HOST ?? "gitlab.bizcorelab.com";
+export const DEPLOY_HOST = process.env.DORI_DEPLOY_HOST ?? "ubuntu-nas";
+export const DEPLOY_STATE_DIR = process.env.DORI_DEPLOY_STATE_DIR ?? "/srv/apps/.deploy-state";
+export const approvalsDir = (): string => process.env.DORI_APPROVALS_DIR ?? `${process.env.HOME}/.dori/state/approvals`;
+const glRef = (s: string): { readonly repo: string; readonly n: string } | null => {
+  const m = /gitlab:([\w.-]+(?:\/[\w.-]+)+?)[!#](\d+)\b/.exec(s);
+  return m?.[1] && m[2] ? { repo: m[1], n: m[2] } : null;
+};
+const glab = (path: string): string[] => ["env", "GLAB_SEND_TELEMETRY=0", "glab", "api", "--hostname", GITLAB_HOST, path];
 
 export const splitDone = (done: string): string[] => {
   const body = done.replace(/^Done\s*=\s*/i, "");
@@ -112,6 +127,13 @@ const onlyKeys = (opts: readonly Opt[], allowed: (k: string) => boolean, kind: s
 
 export const parseSignal = (raw: string): Signal => {
   const s = raw.trim();
+  const gl = glRef(s);
+  const glKind = /^(merged|closed)\s+gitlab:/i.exec(s)?.[1]?.toLowerCase();
+  if (gl && glKind) return { kind: glKind === "merged" ? "gitlab-merged" : "gitlab-closed", repo: gl.repo, n: gl.n };
+  const dep = /^deployed\s+([\w.-]+)@([0-9a-f]{7,40})\s*$/i.exec(s);
+  if (dep?.[1] && dep[2]) return { kind: "deployed", app: dep[1], sha: dep[2] };
+  const appr = /^approved\s+([a-z0-9][a-z0-9._-]{1,60})\s*$/i.exec(s);
+  if (appr?.[1]) return { kind: "approved", key: appr[1] };
   const gh = /^(merged|closed)\s+([\w.-]+\/[\w.-]+)(?:#|\/(?:pull|issues)\/)(\d+)\s*$/i.exec(s);
   if (gh?.[1] && gh[2] && gh[3]) return { kind: gh[1].toLowerCase() as "merged" | "closed", repo: gh[2], n: gh[3] };
   const pub = /^published\s+(\S+)@(\S+)\s*$/i.exec(s);
@@ -176,6 +198,28 @@ export const checkSignal = async (signal: string, run: Runner, io: SignalIo = {}
     return { signal: s, ok: false, detail: e instanceof SignalSyntaxError ? e.message : String(e) };
   }
   switch (sig.kind) {
+    case "gitlab-merged": {
+      const r = await run(glab(`projects/${encodeURIComponent(sig.repo)}/merge_requests/${sig.n}`));
+      const j = r.code === 0 ? (JSON.parse(r.out) as { state?: string; merge_commit_sha?: string | null; squash_commit_sha?: string | null }) : {};
+      const sha = j.merge_commit_sha ?? j.squash_commit_sha ?? "";
+      return { signal: s, ok: j.state === "merged" && sha.length > 0, detail: j.state ? `${j.state} ${sha.slice(0, 10)}`.trim() : r.err || "no answer" };
+    }
+    case "gitlab-closed": {
+      const r = await run(glab(`projects/${encodeURIComponent(sig.repo)}/issues/${sig.n}`));
+      const j = r.code === 0 ? (JSON.parse(r.out) as { state?: string }) : {};
+      return { signal: s, ok: j.state === "closed", detail: j.state ?? (r.err || "no answer") };
+    }
+    case "deployed": {
+      const r = await run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", DEPLOY_HOST, "cat", `${DEPLOY_STATE_DIR}/${sig.app}.sha`]);
+      const live = r.code === 0 ? r.out.trim() : "";
+      const ok = live.length >= 7 && (live.startsWith(sig.sha) || sig.sha.startsWith(live));
+      return { signal: s, ok, detail: live ? `live ${live.slice(0, 10)}` : r.err || "no deploy state" };
+    }
+    case "approved": {
+      const f = Bun.file(`${approvalsDir()}/${sig.key}`);
+      const ok = await f.exists();
+      return { signal: s, ok, detail: ok ? `approved: ${(await f.text()).trim().slice(0, 120)}` : "not approved yet (lead writes the approval file)" };
+    }
     case "merged": {
       const r = await run(["gh", "pr", "view", sig.n, "--repo", sig.repo, "--json", "state,mergeCommit"]);
       const j = r.code === 0 ? (JSON.parse(r.out) as { state?: string; mergeCommit?: { oid?: string } | null }) : {};

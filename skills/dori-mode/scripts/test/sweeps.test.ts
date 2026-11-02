@@ -3,7 +3,7 @@ import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { deadPaneTick, newDeadPaneState } from "../src/dead-panes.ts";
-import { freshnessTick } from "../src/freshness.ts";
+import { freshnessTick, lastReportLine } from "../src/freshness.ts";
 import { acquireSlot, releaseSlot } from "../src/heavy-slot.ts";
 import { guardTick } from "../src/host-guard.ts";
 import { adoptLane, launchLane, LaunchError } from "../src/launch.ts";
@@ -204,4 +204,14 @@ test("the session id is read from --session, then a child's environment, then th
   const listDir = () => ["2026-01-01T09-00-00-000Z_01a10000-0000-7000-8000-000000000000.jsonl", "2026-01-01T12-00-02-113Z_01a11440-ee81-7f90-b2ed-dcc7d51a0adf.jsonl"];
   const byStart = await resolveSession("w:p1", "/repo", table, { run: fake({ "ps eww": "bun mcp X=1", "ps -o lstart=": "Thu Jan  1 12:00:01 2026 GMT" }), sessionsDir: "/s", listDir });
   expect(byStart).toEqual({ id: "01a11440-ee81-7f90-b2ed-dcc7d51a0adf", via: "start-time", pid: 11 });
+});
+
+test("a report wrapped over several pane lines is read whole, up to the blank line", () => {
+  const screen = ["", " [REPORT] quiet-lane | milestone | MR 236 merged, waiting for deploy. Backup is", " prod-before-order.dump. 4 review notes fixed.", "", " - Home: details follow"].join("\n");
+  expect(lastReportLine(screen, "quiet-lane")).toBe("[REPORT] quiet-lane | milestone | MR 236 merged, waiting for deploy. Backup is prod-before-order.dump. 4 review notes fixed.");
+});
+
+test("a wrapped report sent from a shell command stops at the closing quote", () => {
+  const screen = [' $ herdr pane send-text w:p1 "[REPORT] quiet-lane | milestone | key saved, GTM via API only. MR 239', ' waiting for review." && herdr pane send-keys w:p1 Enter && echo sent', " ✓ <1s sent"].join("\n");
+  expect(lastReportLine(screen, "quiet-lane")).toBe("[REPORT] quiet-lane | milestone | key saved, GTM via API only. MR 239 waiting for review.");
 });
