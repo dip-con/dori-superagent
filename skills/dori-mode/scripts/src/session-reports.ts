@@ -1,5 +1,6 @@
 import type { Lane } from "./registry.ts";
-import { findSessionFile, readSessionTail } from "./session-id.ts";
+import type { Runner } from "./run.ts";
+import { findSessionFile, procTable, readSessionTail, resolveSession } from "./session-id.ts";
 
 const KINDS = "milestone|blocker|question|done";
 
@@ -34,7 +35,16 @@ export const lastSessionReport = (entries: readonly Record<string, unknown>[], k
   return last;
 };
 
-export const laneSessionReport = (sessionsDir: string, lane: Lane): string | null => {
-  const file = lane.session ? findSessionFile(sessionsDir, lane.session, lane.cwd) : undefined;
+/** Most registry rows carry no session id, so one is resolved from the lane's pane the way `dori sync` does. A failed lookup falls back to the screen. */
+export const laneSessionReport = async (run: Runner, sessionsDir: string, lane: Lane): Promise<string | null> => {
+  let id = lane.session;
+  if (!id && lane.pane && lane.cwd) {
+    try {
+      id = (await resolveSession(lane.pane, lane.cwd, await procTable(run), { run, sessionsDir })).id;
+    } catch (e) {
+      console.error(`SESSION_REPORT_LOOKUP_FAILED ${lane.key}: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300));
+    }
+  }
+  const file = id ? findSessionFile(sessionsDir, id, lane.cwd) : undefined;
   return file ? lastSessionReport(readSessionTail(file), lane.key) : null;
 };
