@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { readdirSync, utimesSync } from "node:fs";
+import { join } from "node:path";
 
-import { ack, EYES, HOURGLASS, obligationsTick, recordHandled, track, unacked } from "../src/ack.ts";
+import { ack, EYES, HOURGLASS, obligationsDir, obligationsTick, recordHandled, track, unacked } from "../src/ack.ts";
 import { MessengerError } from "../src/messenger/http.ts";
 import { withState } from "./fakes.ts";
 
@@ -72,6 +74,15 @@ test("tracking the same message twice keeps the first receipt time", async () =>
   await track(state.dir, undefined, { channel: "11", message: "22" }, T0);
   expect(await track(state.dir, undefined, { channel: "11", message: "22" }, T0 + 10 * MIN)).toBe("TRACK_EXISTS 11 22");
   expect(unacked(state.dir)[0]?.at).toBe(T0);
+});
+
+test("a receipt for a message nobody tracked is pruned a day after it was written, a tracked one is kept", async () => {
+  recordHandled(state.dir, "11", "55", T0, { reply: true });
+  await track(state.dir, undefined, { channel: "11", message: "66" }, Date.now());
+  const old = (Date.now() - 2 * 86_400_000) / 1000;
+  for (const name of readdirSync(obligationsDir(state.dir))) utimesSync(join(obligationsDir(state.dir), name), old, old);
+  obligationsTick(state.dir, timers, Date.now());
+  expect(readdirSync(obligationsDir(state.dir)).sort()).toEqual(["11-66.track.json"]);
 });
 
 test("non-numeric ids and a handled without a link are refused", async () => {
