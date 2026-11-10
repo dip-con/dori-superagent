@@ -55,6 +55,29 @@
       "my-stt",
       "--file",
       "{file}"
+    ],
+    "leadAlert": [
+      "my-messenger",
+      "send",
+      "--channel",
+      "alerts",
+      "--text",
+      "{text}"
     ]
+  },
+  "ackTimeoutSec": 120,
+  "handledTimeoutMin": 30,
+  "leadUnreadRestartMin": 5,
+  "leadSessionFile": "",
+  "leadWatch": {
+    "pausedMin": 2,
+    "autoResume": false,
+    "restartProposeMin": 0
+  },
+  "features": {
+    "hourglass": true,
+    "obligations": true,
+    "leadWatch": true,
+    "sessionReports": true
   }
 }
