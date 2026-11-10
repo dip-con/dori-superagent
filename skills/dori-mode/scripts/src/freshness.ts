@@ -3,6 +3,7 @@ import type { FlowDeps } from "./done-flow.ts";
 import { checkPausedLane } from "./pause.ts";
 import { readScreen, sendVerified } from "./panes.ts";
 import { type Lane, statusOf } from "./registry.ts";
+import { laneSessionReport } from "./session-reports.ts";
 
 export const lastReportLine = (screen: string, key: string): string | null => {
   const grammar = new RegExp(`\\[REPORT\\] ${key.replace(/[.]/g, "\\.")} \\| (milestone|blocker|question|done) \\| (?!<what)\\S`);
@@ -72,9 +73,11 @@ export const freshnessTick = async (deps: FlowDeps, home: string, opts: Freshnes
     }
     const hook = deps.config.hooks.threadReply;
     if (silentMin >= deps.config.postAfterMin && hook && lane.thread !== "none" && (current.lastAutoReplyAt ?? 0) < heard) {
-      const report = lastReportLine(await readScreen(deps.run, lane.pane, 200), lane.key);
-      // The two reads are a full loop interval apart: a line counts only once it is still there on the next tick.
-      const seenBefore = current.lastSeenReport;
+      const fromSession = deps.config.features.sessionReports ? laneSessionReport(deps.config.sessionsDir, lane) : null;
+      const report = fromSession ?? lastReportLine(await readScreen(deps.run, lane.pane, 200), lane.key);
+      // Two screen reads are a full loop interval apart: a screen line counts only once it is still there on the next
+      // tick. A session-file report is the whole argv the lane sent, so it needs no second look.
+      const seenBefore = fromSession ?? current.lastSeenReport;
       const seen = report ?? undefined;
       current = { ...current, lastSeenReport: seen };
       let hold: { kind: SweepAct["kind"]; detail: string } | null = null;
