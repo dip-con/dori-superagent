@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { MessengerError } from "./messenger/http.ts";
@@ -159,6 +159,19 @@ export const unacked = (stateDir: string): Obligation[] => listObligations(state
 
 export type ObligationTimers = { readonly ackTimeoutSec: number; readonly handledTimeoutMin: number };
 
+/** An ack or handled for a message nobody tracked has no group to expire with; it goes a day after it was written. */
+const pruneUntracked = (stateDir: string, now: number): void => {
+  let names: string[];
+  try { names = readdirSync(obligationsDir(stateDir)); } catch { return; }
+  const tracked = new Set(names.flatMap((n) => { const m = FILE.exec(n); return m?.[3] === "track" ? [`${m[1]}-${m[2]}`] : []; }));
+  for (const name of names) {
+    const m = FILE.exec(name);
+    if (!m || tracked.has(`${m[1]}-${m[2]}`)) continue;
+    const path = join(obligationsDir(stateDir), name);
+    if (now - statSync(path).mtimeMs > DAY) rmSync(path, { force: true });
+  }
+};
+
 const quote = (text: string): string => JSON.stringify(text.replace(/\s+/g, " ").slice(0, 80));
 
 /**
@@ -168,6 +181,7 @@ const quote = (text: string): string => JSON.stringify(text.replace(/\s+/g, " ")
  */
 export const obligationsTick = (stateDir: string, timers: ObligationTimers, now: number): string[] => {
   const out: string[] = [];
+  pruneUntracked(stateDir, now);
   for (const o of listObligations(stateDir)) {
     const path = (e: Event) => fileOf(stateDir, o.channel, o.message, e);
     if ((o.handledAt !== undefined && now - o.handledAt > DAY) || now - o.at > KEEP_MS) {
