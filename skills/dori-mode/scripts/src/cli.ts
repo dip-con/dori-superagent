@@ -22,6 +22,8 @@ import { Telegram } from "./messenger/telegram.ts";
 import { Discord, discordPresence } from "./messenger/discord.ts";
 import { realTimers } from "./messenger/typing.ts";
 import { transcribe, TranscriptionError } from "./messenger/voice.ts";
+import { ack, AckError, obligationsTick, recordHandled, track } from "./ack.ts";
+import { leadSessionFile, leadStateOf, leadWatchTick } from "./lead-watch.ts";
 
 const USAGE = `dori <command> [options]
 
@@ -47,7 +49,17 @@ const USAGE = `dori <command> [options]
   presence <slack|discord>             keep the account shown as online until stopped
   transcribe <audio-file>              run hooks.transcribe and print the text
   inbound slack [--loop MIN]           print INBOUND lines: unread thread replies (threads view), replies in threads
-                                       the Dori posted in (any helper), DMs and channels with unread mentions`;
+                                       the Dori posted in (any helper), DMs and channels with unread mentions
+  track <channel> <messageId> [--source NAME] [--text T]
+                                       register a received Discord message (owner message, or an external card with
+                                       --source) as an obligation; puts the hourglass on it (features.hourglass)
+  ack <channel> <messageId>            the lead's read receipt: hourglass off, eyes on, ack recorded
+  handled <channel> <messageId> [--lane KEY ...] [--reply] [--note T]
+                                       link what handled a tracked message; closes its obligation
+  obligations [--loop MIN] [--once]    print UNACKED (ackTimeoutSec) / UNHANDLED (handledTimeoutMin), once per message
+  lead-watch [--loop MIN] [--once] [--session-file FILE]
+                                       print LEAD_PAUSED / LEAD_UNREAD from the lead session file and run hooks.leadAlert;
+                                       leadWatch.autoResume types /resume, leadWatch.restartProposeMin proposes a restart`;
 
 const die = (message: string, code = 1): never => {
   console.error(message);
@@ -66,13 +78,24 @@ const flags = parseArgs({
     title: { type: "string" }, brief: { type: "string" }, done: { type: "string" }, thread: { type: "string" },
     model: { type: "string" }, cwd: { type: "string" }, pane: { type: "string" }, evidence: { type: "string" },
     reason: { type: "string", multiple: true }, note: { type: "string" }, write: { type: "boolean" }, loop: { type: "string" },
-    once: { type: "boolean" }, "no-nudge": { type: "boolean" }, lane: { type: "string" },
+    once: { type: "boolean" }, "no-nudge": { type: "boolean" }, lane: { type: "string", multiple: true },
     to: { type: "string" }, text: { type: "string" }, edit: { type: "string" },
+    source: { type: "string" }, reply: { type: "boolean" }, "session-file": { type: "string" },
   },
 });
 const opt = (name: string): string | undefined => {
-  const v = flags.values[name];
+  const raw = flags.values[name];
+  const v = Array.isArray(raw) ? raw.at(-1) : raw;
   return typeof v === "string" ? v.trim() : undefined;
+};
+const discordReactions = (): Discord | undefined => {
+  const token = process.env.DORI_DISCORD_TOKEN;
+  return token ? new Discord(fetchHttp, realClock, token) : undefined;
+};
+const pair = (): [string, string] => {
+  const [channel, message, ...extra] = flags.positionals;
+  if (!channel || !message || extra.length) die(`usage: dori ${command} <channel> <messageId>`);
+  return [channel ?? "", message ?? ""];
 };
 const need = (name: string): string => opt(name) || die(`--${name} is required`);
 const key = flags.positionals[0];
@@ -246,6 +269,48 @@ try {
       });
       break;
     }
+    case "track": {
+      const [channel, message] = pair();
+      const reactions = config.features.hourglass ? discordReactions() : undefined;
+      if (config.features.hourglass && !reactions) console.error("TRACK_NO_TOKEN DORI_DISCORD_TOKEN is not set; tracked without the hourglass");
+      console.log(await track(config.stateDir, reactions, { channel, message, source: opt("source"), text: opt("text") }, realClock.now()));
+      break;
+    }
+    case "ack": {
+      const [channel, message] = pair();
+      console.log(await ack(config.stateDir, discordReactions() ?? die("DORI_DISCORD_TOKEN is not set"), channel, message, realClock.now()));
+      break;
+    }
+    case "handled": {
+      const [channel, message] = pair();
+      const lanes = ((flags.values.lane as string[] | undefined) ?? []).map((l) => l.trim()).filter(Boolean);
+      console.log(recordHandled(config.stateDir, channel, message, realClock.now(), { lanes, reply: flags.values.reply === true, note: opt("note") }));
+      break;
+    }
+    case "obligations": {
+      if (!config.features.obligations) die("OBLIGATIONS_OFF features.obligations is false", 0);
+      await every(flags.values.once ? 0 : loopMin, async () => {
+        for (const line of obligationsTick(config.stateDir, config, realClock.now())) console.log(line);
+      });
+      break;
+    }
+    case "lead-watch": {
+      if (!config.features.leadWatch) die("LEAD_WATCH_OFF features.leadWatch is false", 0);
+      const wdeps = { config: opt("session-file") ? { ...config, leadSessionFile: opt("session-file") ?? "" } : config, run, clock: realClock };
+      let warned = "";
+      await every(flags.values.once ? 0 : loopMin, async () => {
+        const file = await leadSessionFile(wdeps);
+        if (!file) {
+          const why = `LEAD_WATCH_NO_SESSION lead pane ${config.leadPane || "(unset)"}: no session file found; set leadSessionFile or leadPane`;
+          if (why !== warned) console.log(why);
+          warned = why;
+          return;
+        }
+        warned = "";
+        for (const line of await leadWatchTick(wdeps, leadStateOf(file))) console.log(line);
+      });
+      break;
+    }
     case "transcribe":
       console.log(await transcribe(run, config.hooks.transcribe, key ?? die("transcribe needs an audio file path")));
       break;
@@ -254,6 +319,6 @@ try {
       process.exit(command ? 1 : 0);
   }
 } catch (e) {
-  if (e instanceof LaunchError || e instanceof UnsafeMessageError || e instanceof MessengerError || e instanceof TranscriptionError) die(e.message);
+  if (e instanceof LaunchError || e instanceof UnsafeMessageError || e instanceof MessengerError || e instanceof TranscriptionError || e instanceof AckError) die(e.message);
   throw e;
 }

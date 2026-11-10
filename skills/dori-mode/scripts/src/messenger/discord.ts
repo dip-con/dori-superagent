@@ -18,7 +18,7 @@ export class Discord {
     private readonly base = "https://discord.com/api/v10",
   ) {}
 
-  async call<T = unknown>(method: "GET" | "POST" | "PATCH", path: string, body?: Record<string, unknown>): Promise<T> {
+  async call<T = unknown>(method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE", path: string, body?: Record<string, unknown>): Promise<T> {
     const res = await withBackoff(this.http, this.clock, { method, url: `${this.base}${path}`, headers: { Authorization: `Bot ${this.botToken}`, "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) }, undefined, retryAfter);
     if (res.status >= 300) throw new MessengerError(`discord ${method} ${path}: ${res.status} ${res.body.slice(0, 160)}`, res.status);
     return (res.body ? JSON.parse(res.body) : {}) as T;
@@ -34,6 +34,16 @@ export class Discord {
 
   async typing(channelId: string): Promise<void> {
     await this.call("POST", `/channels/${channelId}/typing`);
+  }
+
+  /** Adds the bot's own reaction. Discord answers 204; adding one that is already there is a no-op. */
+  async react(channelId: string, messageId: string, emoji: string): Promise<void> {
+    await this.call("PUT", `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}/@me`);
+  }
+
+  /** Removes the bot's own reaction; a reaction that is not there is not an error. */
+  async unreact(channelId: string, messageId: string, emoji: string): Promise<void> {
+    await this.call("DELETE", `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}/@me`);
   }
 
   async startThread(channelId: string, messageId: string, name: string): Promise<string> {

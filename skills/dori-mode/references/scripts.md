@@ -34,6 +34,13 @@ Needs: bun 1.3+, herdr, git, and the GitHub CLI (`gh`) for `merged`/`closed` sig
 | `guard` | load 150/80, 20% memory, 50 GB disk, 20 panes | `guard` |
 | `hooks.threadReply`, `hooks.threadDone` | none | `freshness`, `close` |
 | `hooks.transcribe` | none | `transcribe` (argv with `{file}`, prints the text) |
+| `hooks.leadAlert` | none | `lead-watch`: argv with `{text}`, run for every `LEAD_PAUSED`, `LEAD_UNREAD` and `LEAD_RESTART_PROPOSED` line. Point it somewhere a person sees while the lead is stopped (its own monitors are held then) |
+| `ackTimeoutSec` | 120 | `obligations`: seconds a tracked message may wait for `dori ack` before `UNACKED` (same key as dev-bokdong/dori-mode, whose default is 60) |
+| `handledTimeoutMin` | 30 | `obligations`: minutes from the ack, or from the receipt when never acked, until `UNHANDLED` without `dori handled` |
+| `leadUnreadRestartMin` | 5 | `lead-watch`: minutes an unacked message may wait while the lead is not running before `LEAD_UNREAD`. Same key as upstream, but here it alerts; it never restarts the lead |
+| `leadSessionFile` | blank | `lead-watch`: the lead's session JSONL; blank resolves it from the agent running in `leadPane` |
+| `leadWatch` | `pausedMin` 2, `autoResume` false, `restartProposeMin` 0 | `lead-watch`: report a pause that lasts `pausedMin`; `autoResume` types `/resume` once per pause, only into an empty input line under omo's `Paused ... /resume` footer; `restartProposeMin` > 0 prints `LEAD_RESTART_PROPOSED` once an unread message is that old |
+| `features` | all true: `hourglass`, `obligations`, `leadWatch`, `sessionReports` | switches each event improvement off on its own: the hourglass on `track`, the `obligations` and `lead-watch` commands (they exit 0 with `*_OFF`), and `freshness` reading reports from session files |
 
 Hooks are argv templates for your messenger CLI. `{thread}`, `{text}` and `{key}` are filled into each argument separately, so the text stays one argument whatever it contains.
 
@@ -85,7 +92,27 @@ Both print `PAUSED` / `RESUMED` and exit 0 on success. A lane in any other state
 Runs forever. Every 30 seconds it prints each new claim once (`LANE_DONE_CLAIMED`). Claims older than `closeAfterMin` are settled: unpushed or uncommitted work and failing signals turn into objections (`LANE_NOT_DONE`); otherwise the lane is closed (`LANE_CLOSED`). The deadline lives in the registry, so a restart picks up where it left off.
 
 ### `dori freshness [--loop MIN]`
-For working lanes that have gone quiet: a nudge in the pane after `nudgeAfterMin`, then the lane's last `[REPORT]` line posted to its thread after `postAfterMin`, with home paths and pane ids scrubbed. Each happens once per silence. The line is posted only once it is still the last `[REPORT]` line on the next tick (`PENDING-REPORT` the first time) and differs from the line posted last time (`STALE-REPORT` otherwise). A held-back outcome is printed once per change, not on every tick. A nudge reports its delivery as `delivered` (the agent status moved to working) or `unconfirmed`.
+For working lanes that have gone quiet: a nudge in the pane after `nudgeAfterMin`, then the lane's last `[REPORT]` line posted to its thread after `postAfterMin`, with home paths and pane ids scrubbed. Each happens once per silence. The line is posted only once it is still the last `[REPORT]` line on the next tick (`PENDING-REPORT` the first time) and differs from the line posted last time (`STALE-REPORT` otherwise). With `features.sessionReports` the report is read first from the lane's session file: the last `[REPORT] <key> | <kind> | <text>` inside the lane's own tool calls (the argv it sent the report with), so pane width and wrapping never cut it and the brief's template never counts. A session-file report needs no second tick; the screen is read only when the lane has no session or never sent a report. A held-back outcome is printed once per change, not on every tick. A nudge reports its delivery as `delivered` (the agent status moved to working) or `unconfirmed`.
+
+### `dori track <channel> <messageId> [--source NAME] [--text T]` / `dori ack` / `dori handled`
+Owner-message obligations, with the command names of dev-bokdong/dori-mode but without its supervisor: whatever receives a message registers it.
+- `track`: a Discord listener calls it for each owner message (`--source owner`, the default), and any other watcher can register its own item, e.g. a card it posted (`--source card`). It records the receipt time and, with `features.hourglass` and `DORI_DISCORD_TOKEN`, puts ⏳ on the message. A failed reaction still records the obligation. Tracking the same message again keeps the first time.
+- `ack <channel> <messageId>`: the lead's read receipt. ⏳ comes off (absent is fine), 👀 goes on, and only then the ack is recorded, so a failed reaction leaves the message due.
+- `handled <channel> <messageId> [--lane KEY ...] [--reply] [--note T]`: links what handled it and closes the obligation.
+
+State is `<stateDir>/owner-messages/`, one file per message and event, each written once, so the receiver, the lead and the sweep never rewrite each other's files. Handled messages are pruned after a day, everything after a week.
+
+### `dori obligations [--loop MIN] [--once]`
+Prints `UNACKED <channel> <message> <source> <sec>s "<text>"` once a tracked message has waited `ackTimeoutSec` without an ack, and `UNHANDLED <channel> <message> <source> <min>m acked|unacked "<text>"` once it has waited `handledTimeoutMin` from its ack (or receipt) without `handled`. Each line is printed once per message. Nothing is posted to the owner.
+
+### `dori lead-watch [--loop MIN] [--once] [--session-file FILE]`
+Watches the lead session itself, from the newest `session-lifecycle` entry in its session file (read from the end; never the whole file, never the screen): `paused`, `interrupted`, `tool-wait` (running, but the last message is a tool call with no result), `idle` or `running`.
+- `LEAD_PAUSED <state> <min>m since=<iso> unacked=<n>`: once per pause or interruption that has lasted `leadWatch.pausedMin`.
+- `LEAD_UNREAD <state> <n> oldest=<channel> <message> <min>m`: once per (oldest unacked message, lead state) when tracked messages have waited `leadUnreadRestartMin` and the lead is not `running`.
+- With `leadWatch.autoResume`: `LEAD_RESUMED`, or `LEAD_PAUSED_INPUT` when the input line holds text (nothing is typed), or `LEAD_RESUME_SKIPPED` without the Paused footer.
+- With `leadWatch.restartProposeMin`: `LEAD_RESTART_PROPOSED`. dori never restarts the lead.
+
+Each `LEAD_PAUSED` / `LEAD_UNREAD` / `LEAD_RESTART_PROPOSED` line also runs `hooks.leadAlert`; a failing hook prints `LEAD_ALERT_FAILED`. Without a session file it prints `LEAD_WATCH_NO_SESSION` once per cause.
 
 ### `dori dead-panes [--loop MIN]`
 Prints `DEAD_PANE <id>` once per hour for a pane with no running agent status whose last lines match `deadPanePatterns` on two ticks in a row with the same text. A pane herdr reports as idle, working, blocked or done is never dead. A pane that is neither is unrecognised; three unrecognised ticks in a row print `UNRECOGNISED_PANE <id> ...` once (list non-agent panes in `ignorePanes`).

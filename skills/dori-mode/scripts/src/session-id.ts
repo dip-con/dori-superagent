@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readdirSync, readSync } from "node:fs";
 import { join } from "node:path";
 
 import type { Runner } from "./run.ts";
@@ -30,6 +30,39 @@ const descendants = (table: readonly Proc[], root: number): Proc[] => {
 };
 
 export const sessionDirFor = (sessionsDir: string, cwd: string): string => join(sessionsDir, `--${cwd.replace(/^\//, "").replace(/\//g, "-")}--`);
+
+/** The session file for `id`: in the cwd's directory when it is known, else searched across every session directory. */
+export const findSessionFile = (sessionsDir: string, id: string, cwd?: string): string | undefined => {
+  if (!/^[0-9a-f-]{36}$/.test(id)) return undefined;
+  const suffix = `_${id}.jsonl`;
+  const list = (d: string): string[] => { try { return readdirSync(d); } catch { return []; } };
+  const dirs = cwd ? [sessionDirFor(sessionsDir, cwd)] : [];
+  for (const dir of [...dirs, ...list(sessionsDir).map((d) => join(sessionsDir, d))]) {
+    const hit = list(dir).find((n) => n.endsWith(suffix));
+    if (hit) return join(dir, hit);
+  }
+  return undefined;
+};
+
+/** The last `bytes` of a JSONL file as parsed entries (a cut first line and unparsable lines are skipped). Session files grow to hundreds of MB. */
+export const readSessionTail = (file: string, bytes = 1 << 20): Record<string, unknown>[] => {
+  let fd: number;
+  try { fd = openSync(file, "r"); } catch { return []; }
+  try {
+    const size = fstatSync(fd).size;
+    const start = Math.max(0, size - bytes);
+    const buf = Buffer.alloc(size - start);
+    readSync(fd, buf, 0, buf.length, start);
+    const lines = buf.toString("utf8").split("\n");
+    if (start > 0) lines.shift();
+    return lines.flatMap((l) => {
+      if (!l.trim()) return [];
+      try { return [JSON.parse(l) as Record<string, unknown>]; } catch { return []; }
+    });
+  } finally {
+    closeSync(fd);
+  }
+};
 
 export type SessionDeps = { readonly run: Runner; readonly sessionsDir: string; readonly listDir?: (dir: string) => readonly string[] };
 
