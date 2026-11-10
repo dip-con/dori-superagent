@@ -49,6 +49,23 @@ test("freshness posts the session-file report on the first due tick, wrapped scr
   expect(world.calls.some((c) => c[0] === "herdr" && c[2] === "read")).toBe(false);
 });
 
+test("a lane with no session id in the registry is resolved from its pane, as dori sync does", async () => {
+  const sessionsDir = join(state.dir, "sessions");
+  const dir = sessionDirFor(sessionsDir, "/repo");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `2026-01-01T11-00-00-000Z_${SID}.jsonl`), `${JSON.stringify(call({ code: '["herdr","pane","send-text","w:p1","[REPORT] demo | done | merged and deployed"]' }))}\n`);
+  const base = depsFor(world, fakeClock(T0 + 21 * MIN), state.dir, { sessionsDir, hooks: { threadReply: ["notify", "{thread}", "{text}"] }, nudgeAfterMin: 999 });
+  const run: typeof base.run = async (argv, opts) => {
+    if (argv[0] === "herdr" && argv[2] === "process-info") return { code: 0, out: JSON.stringify({ result: { process_info: { shell_pid: 100 } } }), err: "" };
+    if (argv[0] === "ps" && argv[1] === "-A") return { code: 0, out: `  100     1 -zsh\n  200   100 omo --session ${SID} --model m`, err: "" };
+    return base.run(argv, opts);
+  };
+  const { session: _drop, ...unrecorded } = lane;
+  await base.registry.write(unrecorded as Lane);
+  expect((await freshnessTick({ ...base, run }, "/home/test")).map((a) => a.kind)).toEqual(["posted"]);
+  expect(world.calls.find((c) => c[0] === "notify")?.[2]).toContain("merged and deployed");
+});
+
 test("without a session report (or with sessionReports off) freshness falls back to the screen", async () => {
   world.screen = "[REPORT] demo | milestone | from the screen\n❯ ";
   const deps = (ms: number, on: boolean) => {

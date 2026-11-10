@@ -73,7 +73,7 @@ export const freshnessTick = async (deps: FlowDeps, home: string, opts: Freshnes
     }
     const hook = deps.config.hooks.threadReply;
     if (silentMin >= deps.config.postAfterMin && hook && lane.thread !== "none" && (current.lastAutoReplyAt ?? 0) < heard) {
-      const fromSession = deps.config.features.sessionReports ? laneSessionReport(deps.config.sessionsDir, lane) : null;
+      const fromSession = deps.config.features.sessionReports ? await laneSessionReport(deps.run, deps.config.sessionsDir, lane) : null;
       const report = fromSession ?? lastReportLine(await readScreen(deps.run, lane.pane, 200), lane.key);
       // Two screen reads are a full loop interval apart: a screen line counts only once it is still there on the next
       // tick. A session-file report is the whole argv the lane sent, so it needs no second look.
